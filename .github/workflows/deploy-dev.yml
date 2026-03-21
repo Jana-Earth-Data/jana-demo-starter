@@ -1,0 +1,60 @@
+name: "Deploy Dev Jana Demo"
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (default: latest)"
+        required: false
+        default: "latest"
+
+env:
+  AWS_REGION: us-east-2
+  ECS_CLUSTER: dev-jana-cluster
+  ECS_SERVICE: jana-demo
+  TASK_FAMILY: jana-demo
+  ECR_REPOSITORY: jana-demo
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/dev-github-actions-jana
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy service
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.event.inputs.image_tag || 'latest' }}
+        run: |
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition $TASK_FAMILY --query taskDefinition)
+
+          NEW_IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          NEW_DEF=$(echo "$TASK_DEF" | jq --arg IMG "$NEW_IMAGE" \
+            '.containerDefinitions[0].image = $IMG |
+             del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                 .compatibilities, .registeredAt, .registeredBy)')
+
+          REV=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_DEF" \
+            --query 'taskDefinition.revision' --output text)
+
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER --service $ECS_SERVICE \
+            --task-definition $TASK_FAMILY:$REV \
+            --force-new-deployment --no-cli-pager
+
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER --services $ECS_SERVICE
