@@ -1,14 +1,10 @@
-import { apiFetch } from "@/lib/api/client";
+import { apiFetchAll } from "@/lib/api/client";
 import { nepalDemoMock } from "@/lib/mock/demo-data";
-import { DemoData, SourceSummary, TrendPoint, BreakdownPoint } from "@/lib/types/demo";
-
-type PaginatedResponse<T> = {
-  count?: number;
-  results?: T[];
-  next?: string | null;
-};
+import { DemoData, SourceSummary, TrendPoint, BreakdownPoint, RankedFacility, RankedLocation } from "@/lib/types/demo";
+import { RegionConfig, REGIONS } from "@/lib/types/region";
 
 type ClimateTraceEmission = {
+  asset_name?: string;
   start_time?: string;
   co2e_tonnes?: number | string;
   sector_name?: string;
@@ -16,21 +12,30 @@ type ClimateTraceEmission = {
 
 type OpenAQLocation = {
   id?: number | string;
+  openaq_id?: number | string;
+  name?: string;
+  sensor_count?: number;
+  datetime_first?: string;
+  datetime_last?: string;
 };
 
 type OpenAQSensor = {
   id?: number | string;
-};
-
-type OpenAQMeasurement = {
-  datetime_utc?: string;
-  parameter_name?: string;
+  location?: { id?: number; name?: string } | number | string;
+  location_name?: string;
 };
 
 type EdgarRecord = {
   year?: number | string;
   value?: number | string;
   gas?: string;
+  gas_type?: string;
+  sector?: string;
+};
+
+type EdgarGridRecord = {
+  year?: number | string;
+  value?: number | string;
   gas_type?: string;
 };
 
@@ -49,29 +54,61 @@ function getDateRange(values: Array<string | undefined>): string | undefined {
 
 function toNumeric(value: unknown): number {
   if (typeof value === "number") return value;
-  if (typeof value === "string") return Number(value);
+  if (typeof value === "string") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  }
   return 0;
 }
 
-async function fetchClimateTraceSummary(token?: string | null): Promise<{
+type GeoParams = {
+  coordinates?: string;
+  radius?: number;
+};
+
+function geoFromRegion(region: RegionConfig): GeoParams {
+  if (region.coordinates && region.radius) {
+    return { coordinates: region.coordinates, radius: region.radius };
+  }
+  return {};
+}
+
+export type DateRange = {
+  start_date?: string;
+  end_date?: string;
+};
+
+export async function fetchClimateTraceSummary(
+  region: RegionConfig,
+  token?: string | null,
+  dateRange?: DateRange
+): Promise<{
   source: SourceSummary;
   trend: TrendPoint[];
   sectors: BreakdownPoint[];
   kpiValue: string;
+  topFacilities: RankedFacility[];
 }> {
-  const emissions = await apiFetch<PaginatedResponse<ClimateTraceEmission>>(
+  const geo = geoFromRegion(region);
+  const params: Record<string, string | number | boolean> = {
+    country_code: region.countryCode,
+    page_size: 10000,
+    ...geo,
+  };
+  if (dateRange?.start_date) params.start_date = dateRange.start_date;
+  if (dateRange?.end_date) params.end_date = dateRange.end_date;
+
+  const { count: apiCount, results: rows } = await apiFetchAll<ClimateTraceEmission>(
     "/api/v1/data-sources/climatetrace/emissions/",
-    {
-      params: { country_code: "NPL", page_size: 1000 },
-      token,
-    }
+    { params, token }
   );
 
-  const rows = emissions.results ?? [];
+  const totalRecords = Math.max(apiCount, rows.length);
   const range = getDateRange(rows.map((row) => row.start_time));
 
   const byYear = new Map<string, number>();
   const bySector = new Map<string, number>();
+  const byFacility = new Map<string, { co2e: number; sector: string }>();
 
   rows.forEach((row) => {
     const date = row.start_time?.slice(0, 4);
@@ -83,6 +120,13 @@ async function fetchClimateTraceSummary(token?: string | null): Promise<{
 
     const sector = row.sector_name ?? "Other";
     bySector.set(sector, (bySector.get(sector) ?? 0) + value);
+
+    const rawName = row.asset_name ?? "Unknown";
+    const prev = byFacility.get(rawName);
+    byFacility.set(rawName, {
+      co2e: (prev?.co2e ?? 0) + value,
+      sector: prev?.sector ?? sector,
+    });
   });
 
   const trend = Array.from(byYear.entries())
@@ -95,83 +139,181 @@ async function fetchClimateTraceSummary(token?: string | null): Promise<{
     .slice(0, 5)
     .map(([label, value]) => ({ label, value: Math.round(value) }));
 
+  const cleanAssetName = (raw: string): string =>
+    raw.replace(/ Administrative Zone$/i, "").replace(/ Urban Area$/i, "");
+
+  const topEmitters = Array.from(byFacility.entries())
+    .sort((a, b) => b[1].co2e - a[1].co2e)
+    .slice(0, 10)
+    .map(([name, { co2e, sector }]) => ({
+      name: cleanAssetName(name),
+      sector,
+      co2eTonnes: Math.round(co2e),
+    }));
+
   return {
     source: {
       name: "climatetrace",
       status: "live",
       title: "Facility and sector emissions",
-      description:
-        "Live summary generated from the Climate TRACE endpoint used in the Nepal notebook.",
-      recordCount: rows.length,
+      description: geo.coordinates
+        ? `Climate TRACE emissions within ${region.radius} km of ${region.label}.`
+        : "Live summary generated from the Climate TRACE endpoint.",
+      recordCount: totalRecords,
       dateRange: range,
-      notes: ["Source loaded live from API"],
+      notes: [
+        `${numberLabel(totalRecords)} emission records`,
+        `${byYear.size} year(s) of data, ${bySector.size} sectors`,
+      ],
     },
     trend,
     sectors,
-    kpiValue: numberLabel(rows.length),
+    kpiValue: numberLabel(totalRecords),
+    topFacilities: topEmitters,
   };
 }
 
-async function fetchOpenAQSummary(token?: string | null): Promise<{
+export async function fetchOpenAQSummary(
+  region: RegionConfig,
+  token?: string | null
+): Promise<{
   source: SourceSummary;
   locationsValue: string;
   sensorsValue: string;
+  topLocations: RankedLocation[];
 }> {
+  const geo = geoFromRegion(region);
+
+  const sharedParams: Record<string, string | number | boolean> = {
+    page_size: 1000,
+    ...geo,
+  };
+
   const [locations, sensors] = await Promise.all([
-    apiFetch<PaginatedResponse<OpenAQLocation>>(
+    apiFetchAll<OpenAQLocation>(
       "/api/v1/data-sources/openaq/locations/",
-      { params: { country_code: "NP", page_size: 1000 }, token }
+      { params: { country_code: "NP", ...sharedParams }, token }
     ),
-    apiFetch<PaginatedResponse<OpenAQSensor>>(
+    apiFetchAll<OpenAQSensor>(
       "/api/v1/data-sources/openaq/sensors/",
-      { params: { location__country_code: "NP", page_size: 1000 }, token }
+      { params: { location__country_code: "NP", ...sharedParams }, token }
     ),
   ]);
 
-  const locationCount = (locations.results ?? []).length;
-  const sensorCount = (sensors.results ?? []).length;
+  const locationCount = Math.max(locations.count, locations.results.length);
+  const sensorCount = Math.max(sensors.count, sensors.results.length);
+
+  const locationNameById = new Map<string, string>();
+  locations.results.forEach((loc) => {
+    const name = (loc.name ?? "").trim();
+    if (!name) return;
+    if (loc.id != null) locationNameById.set(String(loc.id), name);
+    if ((loc as Record<string, unknown>).openaq_id != null)
+      locationNameById.set(String((loc as Record<string, unknown>).openaq_id), name);
+  });
+
+  const sensorsByLocation = new Map<string, { name: string; count: number }>();
+  sensors.results.forEach((s) => {
+    const loc = s.location;
+    let locId: string;
+    let locName = "";
+
+    if (typeof loc === "object" && loc !== null) {
+      locId = String(loc.id ?? "unknown");
+      locName = (loc.name ?? "").trim();
+    } else {
+      locId = String(loc ?? "unknown");
+      locName = (s.location_name ?? "").trim();
+    }
+
+    if (!locName) locName = locationNameById.get(locId) ?? "";
+
+    const prev = sensorsByLocation.get(locId);
+    sensorsByLocation.set(locId, {
+      name: prev?.name || locName,
+      count: (prev?.count ?? 0) + 1,
+    });
+  });
+
+  const topLocations = Array.from(sensorsByLocation.entries())
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 10)
+    .map(([locId, { name, count }]) => ({
+      name: name || locationNameById.get(locId) || `Location ${locId}`,
+      sensorCount: count,
+    }));
 
   return {
     source: {
       name: "openaq",
       status: "live",
       title: "Air quality monitoring",
-      description:
-        "Live summary of Nepal monitoring coverage from OpenAQ locations and sensors.",
+      description: geo.coordinates
+        ? `OpenAQ monitoring within ${region.radius} km of ${region.label}.`
+        : "Live summary of Nepal monitoring coverage.",
       recordCount: locationCount,
       dateRange: undefined,
       notes: [
-        `${locationCount} monitoring locations`,
-        `${sensorCount} sensors`,
+        `${numberLabel(locationCount)} monitoring locations`,
+        `${numberLabel(sensorCount)} sensors`,
         "Measurements intentionally deferred to keep the demo responsive.",
       ],
     },
     locationsValue: numberLabel(locationCount),
     sensorsValue: numberLabel(sensorCount),
+    topLocations,
   };
 }
 
-async function fetchEdgarSummary(token?: string | null): Promise<{
+export async function fetchEdgarSummary(
+  region: RegionConfig,
+  token?: string | null,
+  dateRange?: DateRange
+): Promise<{
   source: SourceSummary;
   ghgValue: string;
   trend: TrendPoint[];
 }> {
-  const countryTotals = await apiFetch<PaginatedResponse<EdgarRecord>>(
-    "/api/v1/data-sources/edgar/country-totals/",
-    { params: { country_code: "NPL", page_size: 1000 }, token }
+  const geo = geoFromRegion(region);
+  const isLocal = !!geo.coordinates;
+
+  const endpoint = isLocal
+    ? "/api/v1/data-sources/edgar/grid-emissions/"
+    : "/api/v1/data-sources/edgar/country-totals/";
+
+  const params: Record<string, string | number | boolean> = {
+    country_code: region.countryCode,
+    page_size: 1000,
+    ...geo,
+  };
+
+  const { count: apiCount, results: rawRows } = await apiFetchAll<EdgarRecord | EdgarGridRecord>(
+    endpoint,
+    { params, token }
   );
 
-  const rows = countryTotals.results ?? [];
+  const startYear = dateRange?.start_date ? Number(dateRange.start_date.slice(0, 4)) : undefined;
+  const endYear = dateRange?.end_date ? Number(dateRange.end_date.slice(0, 4)) : undefined;
+  const rows = (startYear || endYear)
+    ? rawRows.filter((row) => {
+        const y = Number(row.year);
+        if (!Number.isFinite(y)) return false;
+        if (startYear && y < startYear) return false;
+        if (endYear && y > endYear) return false;
+        return true;
+      })
+    : rawRows;
+
+  const totalRecords = (startYear || endYear) ? rows.length : Math.max(apiCount, rawRows.length);
+
   const years = rows
     .map((row) => Number(row.year))
     .filter((value) => Number.isFinite(value));
 
-  const gasKey = (row: EdgarRecord) => row.gas ?? row.gas_type ?? "Unknown";
+  const gasTypes = new Set(rows.map((r) => (r as EdgarRecord).gas_type ?? (r as EdgarRecord).gas ?? "Unknown"));
 
-  const ghgRows = rows.filter((row) => gasKey(row) === "GWP_100_AR5_GHG");
   const byYear = new Map<string, number>();
-
-  ghgRows.forEach((row) => {
+  rows.forEach((row) => {
     const year = String(row.year ?? "");
     if (!year) return;
     byYear.set(year, (byYear.get(year) ?? 0) + toNumeric(row.value));
@@ -179,7 +321,7 @@ async function fetchEdgarSummary(token?: string | null): Promise<{
 
   const trend = Array.from(byYear.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .slice(-6)
+    .slice(-10)
     .map(([period, value]) => ({ period, value: Math.round(value) }));
 
   const minYear = years.length ? Math.min(...years) : undefined;
@@ -189,19 +331,32 @@ async function fetchEdgarSummary(token?: string | null): Promise<{
     source: {
       name: "edgar",
       status: "live",
-      title: "National inventory trends",
-      description:
-        "Live EDGAR national totals summary for long-run Nepal framing.",
-      recordCount: rows.length,
+      title: isLocal ? "Grid-level emissions" : "National inventory trends",
+      description: isLocal
+        ? `EDGAR grid emissions within ${region.radius} km of ${region.label}.`
+        : "Live EDGAR national totals summary for long-run Nepal framing.",
+      recordCount: totalRecords,
       dateRange: minYear && maxYear ? `${minYear} to ${maxYear}` : undefined,
-      notes: ["Source loaded live from API"],
+      notes: [
+        `${numberLabel(totalRecords)} total records`,
+        `Gas types: ${Array.from(gasTypes).join(", ")}`,
+        minYear && maxYear ? `Covers ${maxYear - minYear + 1} years (${minYear}–${maxYear})` : "",
+        isLocal ? `Gridded data within ${region.radius} km radius` : "",
+      ].filter(Boolean),
     },
-    ghgValue: numberLabel(rows.length),
+    ghgValue: numberLabel(totalRecords),
     trend,
   };
 }
 
-export async function getNepalDemoData(token?: string | null): Promise<DemoData> {
+export function resolveRegion(regionKey?: string): RegionConfig {
+  return REGIONS[(regionKey ?? "nepal") as keyof typeof REGIONS] ?? REGIONS.nepal;
+}
+
+export async function getNepalDemoData(
+  token?: string | null,
+  regionKey?: string
+): Promise<DemoData> {
   if (FORCE_MOCKS) {
     return {
       ...nepalDemoMock,
@@ -213,17 +368,31 @@ export async function getNepalDemoData(token?: string | null): Promise<DemoData>
     };
   }
 
+  const region = REGIONS[(regionKey ?? "nepal") as keyof typeof REGIONS] ?? REGIONS.nepal;
+
   try {
     const [climatetrace, openaq, edgar] = await Promise.all([
-      fetchClimateTraceSummary(token),
-      fetchOpenAQSummary(token),
-      fetchEdgarSummary(token),
+      fetchClimateTraceSummary(region, token),
+      fetchOpenAQSummary(region, token),
+      fetchEdgarSummary(region, token),
     ]);
+
+    const emissionsTrend =
+      edgar.trend.length > 1
+        ? edgar.trend
+        : climatetrace.trend.length > 1
+          ? climatetrace.trend
+          : nepalDemoMock.charts.emissionsTrend;
+
+    const sectorBreakdown =
+      climatetrace.sectors.length > 0
+        ? climatetrace.sectors
+        : nepalDemoMock.charts.sectorBreakdown;
 
     return {
       meta: {
-        countryCode: "NPL",
-        countryName: "Nepal",
+        countryCode: region.countryCode,
+        countryName: region.label,
         isMock: false,
         generatedAt: new Date().toISOString(),
       },
@@ -237,17 +406,17 @@ export async function getNepalDemoData(token?: string | null): Promise<DemoData>
         {
           label: "Monitoring locations",
           value: openaq.locationsValue,
-          sublabel: "OpenAQ Nepal coverage",
+          sublabel: `OpenAQ ${region.label} coverage`,
           status: "live",
         },
         {
           label: "OpenAQ sensors",
           value: openaq.sensorsValue,
-          sublabel: "Live summary",
+          sublabel: `${region.label} coverage`,
           status: "live",
         },
         {
-          label: "EDGAR GHG records",
+          label: "EDGAR records",
           value: edgar.ghgValue,
           sublabel: edgar.source.dateRange,
           status: "live",
@@ -259,30 +428,22 @@ export async function getNepalDemoData(token?: string | null): Promise<DemoData>
         edgar: edgar.source,
       },
       charts: {
-        emissionsTrend:
-          climatetrace.trend.length > 0
-            ? climatetrace.trend
-            : edgar.trend.length > 0
-              ? edgar.trend
-              : nepalDemoMock.charts.emissionsTrend,
-        sectorBreakdown:
-          climatetrace.sectors.length > 0
-            ? climatetrace.sectors
-            : nepalDemoMock.charts.sectorBreakdown,
+        emissionsTrend,
+        sectorBreakdown,
       },
       insights: {
         defaultSummary:
-          "This demo is currently showing live source summaries where available. It is designed to translate Jana's source coverage into a decision-ready narrative, not to reproduce the full analyst workflow.",
+          `This demo shows live data for ${region.label}. It translates Jana's source coverage into a decision-ready narrative for non-technical audiences.`,
         compareSources:
           "Climate TRACE surfaces operational and sector-oriented emissions context, while EDGAR provides long-run national trend framing. OpenAQ complements that with practical monitoring coverage on the ground.",
         inventoryTrend:
           "The long-run EDGAR series is useful for explaining historical direction and national context before diving into more operational emissions detail.",
         airQualityCoverage:
-          "OpenAQ live coverage makes the demo feel tangible: stakeholders can immediately see that the Jana platform can expose not just national totals, but on-the-ground monitoring presence as well.",
+          `OpenAQ coverage for ${region.label} shows where sensors and monitoring locations exist on the ground, giving the demo a tangible, real-world dimension.`,
       },
     };
   } catch (error) {
-    console.error("Falling back to mock demo data", error);
+    console.error("Falling back to mock demo data. Error:", (error as Error).message);
     return {
       ...nepalDemoMock,
       meta: {

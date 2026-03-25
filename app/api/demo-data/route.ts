@@ -11,8 +11,10 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const region = req.nextUrl.searchParams.get("region") ?? "nepal";
+
   try {
-    const data = await getNepalDemoData(token);
+    const data = await getNepalDemoData(token, region);
     return NextResponse.json(data);
   } catch (err) {
     console.error("Failed to fetch demo data:", err);

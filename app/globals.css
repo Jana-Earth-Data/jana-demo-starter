@@ -24,3 +24,17 @@ a {
   color: inherit;
   text-decoration: none;
 }
+
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+.animate-progress {
+  width: 40%;
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
+}

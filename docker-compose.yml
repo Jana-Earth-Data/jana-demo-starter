@@ -10,6 +10,8 @@ services:
         NEXT_PUBLIC_DEMO_USE_MOCKS: ${NEXT_PUBLIC_DEMO_USE_MOCKS:-false}
     ports:
       - "3000:3000"
+    env_file:
+      - .env.local
     environment:
       - NODE_ENV=production
       - PORT=3000
