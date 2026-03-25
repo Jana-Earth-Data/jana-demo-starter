@@ -493,6 +493,7 @@ function DemoPageInner({ initialData }: { initialData: DemoData }) {
       </div>
 
       <ChatPanel data={data} />
+      <span className="sr-only" aria-hidden="true" data-version="0.1">v0.1</span>
     </main>
   );
 }
