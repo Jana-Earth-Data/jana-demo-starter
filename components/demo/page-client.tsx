@@ -342,9 +342,12 @@ function DemoPageInner({ initialData }: { initialData: DemoData }) {
                 {data.meta.isMock ? "Using mock fallback" : "Using live data"}
               </Badge>
             </div>
-            <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-white md:text-5xl">
-              Nepal climate intelligence, made legible.
-            </h1>
+            <div className="mb-4 flex items-center gap-6">
+              <img src="/green_logo.png" alt="Jana Earth" className="h-40 w-auto" />
+              <h1 className="text-4xl font-semibold tracking-tight text-white md:text-5xl">
+                One Planet. One API.
+              </h1>
+            </div>
             <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300">
               A simple Jana demo that turns emissions, air quality, and inventory data into a decision-ready view.
             </p>
