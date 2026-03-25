@@ -1,13 +1,67 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { DemoData } from "@/lib/types/demo";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { DemoData, SourceSummary, TrendPoint, BreakdownPoint, RankedFacility, RankedLocation } from "@/lib/types/demo";
 import { Badge, Card, Section } from "@/components/demo/ui";
 import { EmissionsTrendChart, SectorBarChart } from "@/components/demo/charts";
 import { AuthProvider, useAuth } from "@/lib/auth/auth-context";
 import { LoginButton } from "@/components/demo/login-button";
+import { ChatPanel, buildDataContext } from "@/components/demo/chat-panel";
+import { RegionToggle } from "@/components/demo/region-toggle";
+import { RegionKey, REGIONS } from "@/lib/types/region";
+import { ApiCallLog, ApiCallEntry, ApiCallStatus } from "@/components/demo/api-call-log";
+import { DateRangePicker, DateRangeValue } from "@/components/demo/date-range-picker";
+import { TopEmitters, TopLocations } from "@/components/demo/ranked-lists";
 
-type InsightKey = "defaultSummary" | "compareSources" | "inventoryTrend" | "airQualityCoverage";
+const DEFAULT_DATE_RANGE: DateRangeValue = {
+  startDate: "2020-01-01",
+  endDate: "2025-12-31",
+};
+
+type ClimatetracResult = {
+  source: SourceSummary;
+  trend: TrendPoint[];
+  sectors: BreakdownPoint[];
+  kpiValue: string;
+  topFacilities: RankedFacility[];
+};
+
+type OpenAQResult = {
+  source: SourceSummary;
+  locationsValue: string;
+  sensorsValue: string;
+  topLocations: RankedLocation[];
+};
+
+type EdgarResult = {
+  source: SourceSummary;
+  ghgValue: string;
+  trend: TrendPoint[];
+};
+
+const SOURCE_DEFS = [
+  { id: "climatetrace", label: "Climate TRACE emissions", path: "/api/demo-data/climatetrace" },
+  { id: "openaq", label: "OpenAQ locations & sensors", path: "/api/demo-data/openaq" },
+  { id: "edgar", label: "EDGAR inventory", path: "/api/demo-data/edgar" },
+] as const;
+
+function guidedQuestions(regionLabel: string): string[] {
+  return [
+    `Explain the overall ${regionLabel} emissions story using the dashboard data`,
+    `Compare the three data sources — Climate TRACE, OpenAQ, and EDGAR — for ${regionLabel}`,
+    `Analyze the emissions trend from the EDGAR data for ${regionLabel}`,
+    `Explain what the air quality monitoring coverage means for ${regionLabel}`,
+  ];
+}
+
+function makeIdleEntries(): ApiCallEntry[] {
+  return SOURCE_DEFS.map((d) => ({
+    id: d.id,
+    label: d.label,
+    endpoint: d.path,
+    status: "idle" as ApiCallStatus,
+  }));
+}
 
 export function DemoPageClient({ initialData }: { initialData: DemoData }) {
   return (
@@ -17,39 +71,251 @@ export function DemoPageClient({ initialData }: { initialData: DemoData }) {
   );
 }
 
+function assembleDemoData(
+  ct: ClimatetracResult,
+  oaq: OpenAQResult,
+  edgar: EdgarResult,
+  region: RegionKey,
+  mock: DemoData
+): DemoData {
+  const regionConfig = REGIONS[region];
+
+  const emissionsTrend =
+    edgar.trend.length > 1
+      ? edgar.trend
+      : ct.trend.length > 1
+        ? ct.trend
+        : mock.charts.emissionsTrend;
+
+  const sectorBreakdown =
+    ct.sectors.length > 0
+      ? ct.sectors
+      : mock.charts.sectorBreakdown;
+
+  return {
+    meta: {
+      countryCode: regionConfig.countryCode,
+      countryName: regionConfig.label,
+      isMock: false,
+      generatedAt: new Date().toISOString(),
+    },
+    kpis: [
+      {
+        label: "Climate TRACE records",
+        value: ct.kpiValue,
+        sublabel: ct.source.dateRange,
+        status: "live",
+      },
+      {
+        label: "Monitoring locations",
+        value: oaq.locationsValue,
+        sublabel: `OpenAQ ${regionConfig.label} coverage`,
+        status: "live",
+      },
+      {
+        label: "OpenAQ sensors",
+        value: oaq.sensorsValue,
+        sublabel: `${regionConfig.label} coverage`,
+        status: "live",
+      },
+      {
+        label: "EDGAR records",
+        value: edgar.ghgValue,
+        sublabel: edgar.source.dateRange,
+        status: "live",
+      },
+    ],
+    sources: {
+      climatetrace: ct.source,
+      openaq: oaq.source,
+      edgar: edgar.source,
+    },
+    charts: { emissionsTrend, sectorBreakdown },
+    insights: {
+      defaultSummary: `Live data for ${regionConfig.label}.`,
+      compareSources: "Climate TRACE surfaces operational and sector-oriented emissions context, while EDGAR provides long-run national trend framing. OpenAQ complements that with practical monitoring coverage on the ground.",
+      inventoryTrend: "The long-run EDGAR series is useful for explaining historical direction and national context before diving into more operational emissions detail.",
+      airQualityCoverage: `OpenAQ coverage for ${regionConfig.label} shows where sensors and monitoring locations exist on the ground.`,
+    },
+  };
+}
+
 function DemoPageInner({ initialData }: { initialData: DemoData }) {
   const { accessToken } = useAuth();
   const [data, setData] = useState(initialData);
   const [loading, setLoading] = useState(false);
-  const [selectedInsight, setSelectedInsight] = useState<InsightKey>("defaultSummary");
+  const [region, setRegion] = useState<RegionKey>("nepal");
+  const [dateRange, setDateRange] = useState<DateRangeValue>(DEFAULT_DATE_RANGE);
+  const [apiCalls, setApiCalls] = useState<ApiCallEntry[]>(makeIdleEntries());
 
-  const refetchWithToken = useCallback(async (token: string) => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/demo-data", {
-        headers: { Authorization: `Bearer ${token}` },
+  const [topEmitters, setTopEmitters] = useState<RankedFacility[]>([]);
+  const [topLocations, setTopLocations] = useState<RankedLocation[]>([]);
+
+  const [insightQuestion, setInsightQuestion] = useState<string | null>(null);
+  const [insightResponse, setInsightResponse] = useState("");
+  const [insightStreaming, setInsightStreaming] = useState(false);
+  const insightAbortRef = useRef<AbortController | null>(null);
+
+  const ctRef = useRef<ClimatetracResult | null>(null);
+  const oaqRef = useRef<OpenAQResult | null>(null);
+  const edgarRef = useRef<EdgarResult | null>(null);
+
+  const updateEntry = useCallback(
+    (id: string, patch: Partial<ApiCallEntry>) => {
+      setApiCalls((prev) =>
+        prev.map((e) => (e.id === id ? { ...e, ...patch } : e))
+      );
+    },
+    []
+  );
+
+  const fetchSource = useCallback(
+    async (
+      def: (typeof SOURCE_DEFS)[number],
+      token: string,
+      regionKey: RegionKey,
+      extraParams?: Record<string, string>
+    ): Promise<unknown> => {
+      const params = new URLSearchParams({ region: regionKey, ...extraParams });
+      const url = `${def.path}?${params}`;
+      updateEntry(def.id, {
+        status: "calling",
+        endpoint: url,
+        durationMs: undefined,
+        recordCount: undefined,
+        error: undefined,
       });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const live: DemoData = await res.json();
-      setData(live);
-    } catch (err) {
-      console.error("Failed to fetch live data:", err);
-    } finally {
+
+      const t0 = performance.now();
+      try {
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const durationMs = Math.round(performance.now() - t0);
+
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const json = await res.json();
+
+        const recordCount = json.source?.recordCount;
+        updateEntry(def.id, { status: "done", durationMs, recordCount });
+        return json;
+      } catch (err) {
+        const durationMs = Math.round(performance.now() - t0);
+        updateEntry(def.id, {
+          status: "error",
+          durationMs,
+          error: (err as Error).message,
+        });
+        return null;
+      }
+    },
+    [updateEntry]
+  );
+
+  const fetchAll = useCallback(
+    async (token: string, regionKey: RegionKey, dates: DateRangeValue) => {
+      setLoading(true);
+      setInsightQuestion(null);
+      setInsightResponse("");
+      ctRef.current = null;
+      oaqRef.current = null;
+      edgarRef.current = null;
+
+      const dateParams = { start_date: dates.startDate, end_date: dates.endDate };
+
+      setApiCalls(
+        SOURCE_DEFS.map((d) => ({
+          id: d.id,
+          label: d.label,
+          endpoint: `${d.path}?region=${regionKey}`,
+          status: "calling" as ApiCallStatus,
+        }))
+      );
+
+      const [ctResult, oaqResult, edgarResult] = await Promise.all([
+        fetchSource(SOURCE_DEFS[0], token, regionKey, dateParams),
+        fetchSource(SOURCE_DEFS[1], token, regionKey),
+        fetchSource(SOURCE_DEFS[2], token, regionKey, dateParams),
+      ]);
+
+      if (ctResult && oaqResult && edgarResult) {
+        ctRef.current = ctResult as ClimatetracResult;
+        oaqRef.current = oaqResult as OpenAQResult;
+        edgarRef.current = edgarResult as EdgarResult;
+
+        setTopEmitters(ctRef.current.topFacilities ?? []);
+        setTopLocations(oaqRef.current.topLocations ?? []);
+
+        setData(
+          assembleDemoData(
+            ctRef.current,
+            oaqRef.current,
+            edgarRef.current,
+            regionKey,
+            initialData
+          )
+        );
+      }
+
       setLoading(false);
-    }
-  }, []);
+    },
+    [fetchSource, initialData]
+  );
 
   useEffect(() => {
     if (accessToken) {
-      refetchWithToken(accessToken);
+      fetchAll(accessToken, region, dateRange);
     } else {
       setData(initialData);
+      setApiCalls(makeIdleEntries());
     }
-  }, [accessToken, initialData, refetchWithToken]);
+  }, [accessToken, region, dateRange, initialData, fetchAll]);
 
-  const currentInsight = useMemo(() => {
-    return data.insights[selectedInsight];
-  }, [data.insights, selectedInsight]);
+  const askGuidedQuestion = useCallback(
+    async (question: string) => {
+      insightAbortRef.current?.abort();
+
+      setInsightQuestion(question);
+      setInsightResponse("");
+      setInsightStreaming(true);
+
+      const controller = new AbortController();
+      insightAbortRef.current = controller;
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: question }],
+            dataContext: buildDataContext(data),
+          }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok || !res.body) throw new Error(`${res.status}`);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          setInsightResponse(text);
+        }
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          setInsightResponse("Sorry, something went wrong generating this insight. Please try again.");
+        }
+      } finally {
+        setInsightStreaming(false);
+        insightAbortRef.current = null;
+      }
+    },
+    [data]
+  );
 
   return (
     <main className="min-h-screen bg-surface px-4 py-8 text-slate-100 md:px-8">
@@ -61,20 +327,12 @@ function DemoPageInner({ initialData }: { initialData: DemoData }) {
               This interface is a lightweight demonstration for non-technical audiences. It should not be presented as the production product UI.
             </div>
           </div>
-          <div className="shrink-0">
+          <div className="flex shrink-0 flex-wrap items-center gap-3">
+            <DateRangePicker value={dateRange} onChange={setDateRange} disabled={loading || !accessToken} />
+            <RegionToggle value={region} onChange={setRegion} disabled={loading || !accessToken} />
             <LoginButton />
           </div>
         </div>
-
-        {loading && (
-          <div className="flex items-center gap-2 rounded-2xl border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-accent">
-            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            Loading live data&hellip;
-          </div>
-        )}
 
         <section className="grid gap-6 lg:grid-cols-[1.45fr_0.85fr]">
           <div className="rounded-3xl border border-line bg-panel p-8">
@@ -88,7 +346,7 @@ function DemoPageInner({ initialData }: { initialData: DemoData }) {
               Nepal climate intelligence, made legible.
             </h1>
             <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300">
-              A simple Jana demo that turns emissions, air quality, and inventory data into a decision-ready view for non-technical stakeholders.
+              A simple Jana demo that turns emissions, air quality, and inventory data into a decision-ready view.
             </p>
 
             <div className="mt-8 grid gap-4 sm:grid-cols-2">
@@ -111,19 +369,24 @@ function DemoPageInner({ initialData }: { initialData: DemoData }) {
 
           <div className="rounded-3xl border border-line bg-panelAlt p-6">
             <div className="text-xs uppercase tracking-[0.24em] text-accent">
-              What this demo proves
+              Live API calls
             </div>
-            <div className="mt-3 space-y-4 text-sm leading-7 text-slate-300">
-              <p>
-                Jana can present multiple environmental sources in one coherent interface without forcing the audience into raw API responses or notebooks.
-              </p>
-              <p>
-                The same underlying services can support analysts in Python while still giving non-technical viewers a fast narrative view.
-              </p>
-              <p>
-                Generated at:{" "}
-                <span className="text-slate-100">{new Date(data.meta.generatedAt).toLocaleString()}</span>
-              </p>
+            <div className="mt-4">
+              <ApiCallLog entries={apiCalls} />
+            </div>
+            <div className="mt-6 border-t border-line pt-4">
+              <div className="text-xs uppercase tracking-[0.24em] text-accent">
+                What this demo proves
+              </div>
+              <div className="mt-3 space-y-3 text-xs leading-6 text-slate-400">
+                <p>
+                  Jana can present multiple environmental sources in one coherent interface without forcing the audience into raw API responses or notebooks.
+                </p>
+                <p>
+                  Generated at:{" "}
+                  <span className="text-slate-300">{new Date(data.meta.generatedAt).toLocaleString()}</span>
+                </p>
+              </div>
             </div>
           </div>
         </section>
@@ -161,61 +424,72 @@ function DemoPageInner({ initialData }: { initialData: DemoData }) {
         </section>
 
         <section className="grid gap-6 lg:grid-cols-2">
-          <Section title="Emissions trend" eyebrow="visual">
+          <Section title="National emissions trend" eyebrow="EDGAR">
             <p className="mb-4 text-sm leading-7 text-slate-300">
-              Use this chart to anchor the story in change over time rather than schema details.
+              Long-run national inventory trend anchors the story in change over time.
             </p>
             <EmissionsTrendChart data={data.charts.emissionsTrend} />
           </Section>
 
-          <Section title="Sector composition" eyebrow="visual">
+          <Section title="Sector composition" eyebrow="Climate TRACE">
             <p className="mb-4 text-sm leading-7 text-slate-300">
-              This chart gives the audience a fast sense of where emissions activity appears concentrated.
+              Facility-level data shows where emissions activity is concentrated across sectors.
             </p>
             <SectorBarChart data={data.charts.sectorBreakdown} />
           </Section>
         </section>
 
+        <section className="grid gap-6 lg:grid-cols-2">
+          <Section title="Top emitting regions" eyebrow="Climate TRACE">
+            <TopEmitters items={topEmitters} />
+          </Section>
+
+          <Section title="Top monitoring locations" eyebrow="OpenAQ">
+            <TopLocations items={topLocations} />
+          </Section>
+        </section>
+
         <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-          <Section title="Generated Nepal summary" eyebrow="insight">
-            <div className="rounded-2xl border border-line bg-slate-950/30 p-5 text-base leading-8 text-slate-200">
-              {currentInsight}
-            </div>
+          <Section title={insightQuestion ?? "AI-generated insight"} eyebrow="Jana AI">
+            {insightResponse ? (
+              <div className="rounded-2xl border border-line bg-slate-950/30 p-5 text-base leading-8 text-slate-200 whitespace-pre-wrap">
+                {insightResponse}
+                {insightStreaming && (
+                  <span className="ml-1 inline-flex items-center gap-0.5">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent [animation-delay:0.2s]" />
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent [animation-delay:0.4s]" />
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-line bg-slate-950/30 p-5 text-base leading-8 text-slate-400">
+                Click a guided question to generate an AI-powered insight from the current dashboard data.
+              </div>
+            )}
             <div className="mt-4 text-xs leading-6 text-slate-400">
-              Generated from the currently loaded demo data. This narrative is illustrative and should not be treated as a formal analytical report.
+              Generated by Jana AI using {data.meta.isMock ? "mock" : "live"} dashboard data. Not a formal analytical report.
             </div>
           </Section>
 
-          <Section title="Guided questions" eyebrow="interaction">
+          <Section title="Ask about the data" eyebrow="guided questions">
             <div className="grid gap-3">
-              <button
-                onClick={() => setSelectedInsight("defaultSummary")}
-                className="rounded-2xl border border-line bg-panelAlt px-4 py-4 text-left text-sm text-slate-100 transition hover:border-accent"
-              >
-                Explain the overall Nepal story
-              </button>
-              <button
-                onClick={() => setSelectedInsight("compareSources")}
-                className="rounded-2xl border border-line bg-panelAlt px-4 py-4 text-left text-sm text-slate-100 transition hover:border-accent"
-              >
-                Compare emissions sources
-              </button>
-              <button
-                onClick={() => setSelectedInsight("inventoryTrend")}
-                className="rounded-2xl border border-line bg-panelAlt px-4 py-4 text-left text-sm text-slate-100 transition hover:border-accent"
-              >
-                Show long-run inventory trends
-              </button>
-              <button
-                onClick={() => setSelectedInsight("airQualityCoverage")}
-                className="rounded-2xl border border-line bg-panelAlt px-4 py-4 text-left text-sm text-slate-100 transition hover:border-accent"
-              >
-                Explain Nepal air monitoring coverage
-              </button>
+              {guidedQuestions(REGIONS[region].label).map((q) => (
+                <button
+                  key={q}
+                  onClick={() => askGuidedQuestion(q)}
+                  disabled={insightStreaming}
+                  className="rounded-2xl border border-line bg-panelAlt px-4 py-4 text-left text-sm text-slate-100 transition hover:border-accent disabled:opacity-50"
+                >
+                  {q}
+                </button>
+              ))}
             </div>
           </Section>
         </section>
       </div>
+
+      <ChatPanel data={data} />
     </main>
   );
 }

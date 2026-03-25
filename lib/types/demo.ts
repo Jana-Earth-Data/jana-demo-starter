@@ -27,6 +27,21 @@ export type BreakdownPoint = {
   value: number;
 };
 
+export type RankedEmitter = {
+  name: string;
+  sector: string;
+  co2eTonnes: number;
+};
+
+/** @deprecated Use RankedEmitter */
+export type RankedFacility = RankedEmitter;
+
+export type RankedLocation = {
+  name: string;
+  sensorCount: number;
+  dateRange?: string;
+};
+
 export type InsightSet = {
   defaultSummary: string;
   compareSources: string;
