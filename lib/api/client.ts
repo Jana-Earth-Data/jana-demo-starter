@@ -85,3 +85,47 @@ export async function apiFetch<T>(
 
   return response.json() as Promise<T>;
 }
+
+export type PaginatedResponse<T> = {
+  count?: number;
+  results?: T[];
+  next?: string | null;
+};
+
+const MAX_PAGES = 20;
+
+export async function apiFetchAll<T>(
+  path: string,
+  opts: FetchOptions & { maxPages?: number } = {}
+): Promise<{ count: number; results: T[] }> {
+  const limit = opts.maxPages ?? MAX_PAGES;
+  const t0 = Date.now();
+  const firstPage = await apiFetch<PaginatedResponse<T>>(path, opts);
+  console.log(`[apiFetchAll] ${path} page 1: ${(firstPage.results ?? []).length} rows, ${Date.now() - t0}ms (total count: ${firstPage.count ?? "?"})`);
+
+  const totalCount = firstPage.count ?? (firstPage.results ?? []).length;
+  const allResults = [...(firstPage.results ?? [])];
+
+  let nextUrl = firstPage.next;
+  let page = 1;
+
+  while (nextUrl && page < limit) {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;
+
+    const tp = Date.now();
+    const res = await fetch(nextUrl, { headers, cache: "no-store" });
+    if (!res.ok) break;
+
+    const data: PaginatedResponse<T> = await res.json();
+    allResults.push(...(data.results ?? []));
+    page++;
+    console.log(`[apiFetchAll] ${path} page ${page}: ${(data.results ?? []).length} rows, ${Date.now() - tp}ms`);
+    nextUrl = data.next;
+  }
+
+  console.log(`[apiFetchAll] ${path} DONE: ${page} page(s), ${allResults.length} total rows, ${Date.now() - t0}ms total`);
+  return { count: totalCount, results: allResults };
+}
