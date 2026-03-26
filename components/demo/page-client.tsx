@@ -322,10 +322,7 @@ function DemoPageInner({ initialData }: { initialData: DemoData }) {
       <div className="mx-auto flex max-w-7xl flex-col gap-6">
         <div className="flex items-center justify-between gap-4 rounded-3xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
           <div>
-            <div className="font-semibold">Demo Experience — Powered by Jana Earth Data API</div>
-            <div className="mt-1 text-amber-50/90">
-              This interface is a lightweight demonstration for non-technical audiences. It should not be presented as the production product UI.
-            </div>
+            <div className="font-semibold">Demo — Powered by Jana Earth Data</div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-3">
             <DateRangePicker value={dateRange} onChange={setDateRange} disabled={loading || !accessToken} />
