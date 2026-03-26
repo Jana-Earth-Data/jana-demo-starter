@@ -45,14 +45,15 @@ export function SectorBarChart({ data }: { data: BreakdownPoint[] }) {
   return (
     <div className="h-72 w-full">
       <ResponsiveContainer>
-        <BarChart data={data} layout="vertical" margin={{ left: 12, right: 12 }}>
+        <BarChart data={data} layout="vertical" margin={{ left: 0, right: 12 }}>
           <CartesianGrid stroke="#243244" strokeDasharray="3 3" />
           <XAxis type="number" stroke="#93a4b8" />
           <YAxis
             dataKey="label"
             type="category"
-            width={90}
+            width={150}
             stroke="#93a4b8"
+            tick={{ fontSize: 12 }}
           />
           <Tooltip
             contentStyle={{
