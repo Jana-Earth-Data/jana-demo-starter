@@ -192,11 +192,11 @@ export async function fetchOpenAQSummary(
   const [locations, sensors] = await Promise.all([
     apiFetchAll<OpenAQLocation>(
       "/api/v1/data-sources/openaq/locations/",
-      { params: { country_code: "NP", ...sharedParams }, token }
+      { params: { country_code: region.openaqCountryCode, ...sharedParams }, token }
     ),
     apiFetchAll<OpenAQSensor>(
       "/api/v1/data-sources/openaq/sensors/",
-      { params: { location__country_code: "NP", ...sharedParams }, token }
+      { params: { location__country_code: region.openaqCountryCode, ...sharedParams }, token }
     ),
   ]);
 
