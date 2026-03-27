@@ -325,7 +325,7 @@ function DemoPageInner({ initialData }: { initialData: DemoData }) {
             <div className="font-semibold">Demo — Powered by Jana Earth Data</div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-3">
-            <DateRangePicker value={dateRange} onChange={setDateRange} disabled={loading || !accessToken} />
+            <DateRangePicker value={dateRange} onChange={setDateRange} disabled={!accessToken} />
             <RegionToggle value={region} onChange={setRegion} disabled={loading || !accessToken} />
             <LoginButton />
           </div>
