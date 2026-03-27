@@ -376,15 +376,68 @@ function DemoPageInner({ initialData }: { initialData: DemoData }) {
             </div>
             <div className="mt-6 border-t border-line pt-4">
               <div className="text-xs uppercase tracking-[0.24em] text-accent">
-                What this demo proves
+                Jana at a Glance
               </div>
-              <div className="mt-3 space-y-3 text-xs leading-6 text-slate-400">
-                <p>
-                  Jana can present multiple environmental sources in one coherent interface without forcing the audience into raw API responses or notebooks.
-                </p>
-                <p>
+              <div className="mt-3 space-y-1 font-mono text-[11px] leading-5 text-slate-400">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="text-slate-500">
+                      <th className="pr-4 font-normal">Source</th>
+                      <th className="pr-4 text-right font-normal">Records</th>
+                      <th className="text-right font-normal">Countries</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr><td className="pr-4">OpenAQ</td><td className="pr-4 text-right text-slate-300">1,490,089,379</td><td className="text-right text-slate-300">181</td></tr>
+                    <tr><td className="pr-4">Climate TRACE</td><td className="pr-4 text-right text-slate-300">54,772,634</td><td className="text-right text-slate-300">251</td></tr>
+                    <tr><td className="pr-4">EDGAR</td><td className="pr-4 text-right text-slate-300">612,557,807</td><td className="text-right text-slate-300">225</td></tr>
+                    <tr className="border-t border-line font-semibold text-slate-200">
+                      <td className="pr-4 pt-1">TOTAL</td><td className="pr-4 pt-1 text-right">2,157,419,820</td><td></td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-accent hover:text-accent/80">EDGAR: 612,557,807 records | 225 countries</summary>
+                  <div className="mt-1 pl-3 text-slate-500">
+                    <div className="flex justify-between"><span>air_pollutant_grid</span><span className="text-slate-400">466,560,000</span></div>
+                    <div className="flex justify-between"><span>air_pollutant_totals</span><span className="text-slate-400">105,205</span></div>
+                    <div className="flex justify-between"><span>country_count</span><span className="text-slate-400">225</span></div>
+                    <div className="flex justify-between"><span>country_totals</span><span className="text-slate-400">49,280</span></div>
+                    <div className="flex justify-between"><span>fasttrack</span><span className="text-slate-400">1,342</span></div>
+                    <div className="flex justify-between"><span>grid_emissions</span><span className="text-slate-400">145,637,188</span></div>
+                    <div className="flex justify-between"><span>source_total</span><span className="text-slate-400">612,557,807</span></div>
+                    <div className="flex justify-between"><span>temporal_profiles</span><span className="text-slate-400">204,792</span></div>
+                  </div>
+                </details>
+
+                <details>
+                  <summary className="cursor-pointer text-accent hover:text-accent/80">OpenAQ: 1,490,089,379 records | 181 countries</summary>
+                  <div className="mt-1 pl-3 text-slate-500">
+                    <div className="flex justify-between"><span>measurements</span><span className="text-slate-400">1,489,718,052</span></div>
+                    <div className="pl-3 text-[10px] text-slate-600">range: 2016-01-30 → 2026-01-01 · 45,783 locations · 22 params</div>
+                    <div className="flex justify-between"><span>sensors</span><span className="text-slate-400">320,783</span></div>
+                    <div className="flex justify-between"><span>locations</span><span className="text-slate-400">50,514</span></div>
+                    <div className="flex justify-between"><span>parameters</span><span className="text-slate-400">30</span></div>
+                  </div>
+                </details>
+
+                <details>
+                  <summary className="cursor-pointer text-accent hover:text-accent/80">Climate TRACE: 54,772,634 records | 251 countries</summary>
+                  <div className="mt-1 pl-3 text-slate-500">
+                    <div className="flex justify-between"><span>emissions</span><span className="text-slate-400">53,422,192</span></div>
+                    <div className="pl-3 text-[10px] text-slate-600">range: 2021-01-01 → 2025-12-31 · 1,337,533 assets · 7 sectors · 208.7B tonnes CO₂e</div>
+                    <div className="flex justify-between"><span>assets</span><span className="text-slate-400">1,337,615</span></div>
+                    <div className="flex justify-between"><span>sectors</span><span className="text-slate-400">26</span></div>
+                    <div className="flex justify-between"><span>countries</span><span className="text-slate-400">251</span></div>
+                    <div className="flex justify-between"><span>annual_country_emissions</span><span className="text-slate-400">12,550</span></div>
+                    <div className="pl-3 text-[10px] text-slate-600">years: 2015–2024 · 251 countries · 5 gas types</div>
+                  </div>
+                </details>
+
+                <p className="mt-2 text-slate-600">
                   Generated at:{" "}
-                  <span className="text-slate-300">{new Date(data.meta.generatedAt).toLocaleString()}</span>
+                  <span className="text-slate-500">{new Date(data.meta.generatedAt).toLocaleString()}</span>
                 </p>
               </div>
             </div>

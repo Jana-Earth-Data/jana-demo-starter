@@ -158,7 +158,7 @@ export async function fetchClimateTraceSummary(
       title: "Facility and sector emissions",
       description: geo.coordinates
         ? `Climate TRACE emissions within ${region.radius} km of ${region.label}.`
-        : "Live summary generated from the Climate TRACE endpoint.",
+        : `Climate TRACE facility and sector emissions for ${region.countryName}.`,
       recordCount: totalRecords,
       dateRange: range,
       notes: [
@@ -250,7 +250,7 @@ export async function fetchOpenAQSummary(
       title: "Air quality monitoring",
       description: geo.coordinates
         ? `OpenAQ monitoring within ${region.radius} km of ${region.label}.`
-        : "Live summary of Nepal monitoring coverage.",
+        : `Summary coverage for ${region.countryName} monitoring locations, sensors, and recent measurements.`,
       recordCount: locationCount,
       dateRange: undefined,
       notes: [
@@ -334,7 +334,7 @@ export async function fetchEdgarSummary(
       title: isLocal ? "Grid-level emissions" : "National inventory trends",
       description: isLocal
         ? `EDGAR grid emissions within ${region.radius} km of ${region.label}.`
-        : "Live EDGAR national totals summary for long-run Nepal framing.",
+        : `EDGAR national inventory trends for ${region.countryName}.`,
       recordCount: totalRecords,
       dateRange: minYear && maxYear ? `${minYear} to ${maxYear}` : undefined,
       notes: [
