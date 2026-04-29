@@ -281,11 +281,16 @@ export async function fetchEdgarSummary(
     ? "/api/v1/data-sources/edgar/grid-emissions/"
     : "/api/v1/data-sources/edgar/country-totals/";
 
+  // EDGAR grid-emissions has no country dimension (gridded global data) — the
+  // backend's StrictDjangoFilterBackend (Phase 2A, PR #166) rejects unknown
+  // params with HTTP 400. country_code is only valid on country-totals.
   const params: Record<string, string | number | boolean> = {
-    country_code: region.countryCode,
     page_size: 1000,
     ...geo,
   };
+  if (!isLocal) {
+    params.country_code = region.countryCode;
+  }
 
   const { count: apiCount, results: rawRows } = await apiFetchAll<EdgarRecord | EdgarGridRecord>(
     endpoint,
