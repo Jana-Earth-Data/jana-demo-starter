@@ -281,11 +281,24 @@ export async function fetchEdgarSummary(
     ? "/api/v1/data-sources/edgar/grid-emissions/"
     : "/api/v1/data-sources/edgar/country-totals/";
 
+  // EDGAR grid-emissions has no country dimension (gridded global data); only
+  // country-totals accepts country_code. Both endpoints accept start_date /
+  // end_date (Jana PR #170): the backend translates the date range to
+  // year__gte / year__lte so the request is bounded — without this, a Kathmandu
+  // grid + multi-year range can return 20k+ records and time out the proxy.
   const params: Record<string, string | number | boolean> = {
-    country_code: region.countryCode,
     page_size: 1000,
     ...geo,
   };
+  if (!isLocal) {
+    params.country_code = region.countryCode;
+  }
+  if (dateRange?.start_date) {
+    params.start_date = dateRange.start_date;
+  }
+  if (dateRange?.end_date) {
+    params.end_date = dateRange.end_date;
+  }
 
   const { count: apiCount, results: rawRows } = await apiFetchAll<EdgarRecord | EdgarGridRecord>(
     endpoint,
