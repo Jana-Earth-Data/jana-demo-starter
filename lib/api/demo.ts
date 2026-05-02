@@ -91,7 +91,8 @@ export async function fetchClimateTraceSummary(
 }> {
   const geo = geoFromRegion(region);
   const params: Record<string, string | number | boolean> = {
-    country_code: region.countryCode,
+    // Jana #172: prefer canonical country_iso3 (server still accepts country_code as alias)
+    country_iso3: region.countryCode,
     page_size: 10000,
     ...geo,
   };
@@ -192,11 +193,14 @@ export async function fetchOpenAQSummary(
   const [locations, sensors] = await Promise.all([
     apiFetchAll<OpenAQLocation>(
       "/api/v1/data-sources/openaq/locations/",
-      { params: { country_code: region.openaqCountryCode, ...sharedParams }, token }
+      // Jana #172: prefer canonical country_iso2 (OpenAQ is alpha-2, not alpha-3).
+      // Server still accepts country_code as an alias.
+      { params: { country_iso2: region.openaqCountryCode, ...sharedParams }, token }
     ),
     apiFetchAll<OpenAQSensor>(
       "/api/v1/data-sources/openaq/sensors/",
-      { params: { location__country_code: region.openaqCountryCode, ...sharedParams }, token }
+      // Jana #172: prefer canonical location__country_iso2 on FK-traversal filters.
+      { params: { location__country_iso2: region.openaqCountryCode, ...sharedParams }, token }
     ),
   ]);
 

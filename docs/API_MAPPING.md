@@ -16,7 +16,7 @@ Notebook calls:
 - `/api/v1/data-sources/climatetrace/emissions/`
 
 Notebook filters:
-- `country_code=NPL`
+- `country_iso3=NPL` (Jana #172 canonical; `country_code` still accepted as alias)
 
 ### Demo usage
 Use Climate TRACE to power:
@@ -40,9 +40,9 @@ Notebook calls:
 - `/api/v1/data-sources/openaq/sensors/`
 - `/api/v1/data-sources/openaq/measurements/`
 
-Notebook filters:
-- locations: `country_code=NP`
-- sensors: `location__country_code=NP`
+Notebook filters (Jana #172 canonical names; `country_code` / `location__country_code` still accepted as aliases):
+- locations: `country_iso2=NP` (OpenAQ uses ISO 3166-1 alpha-2, NOT alpha-3)
+- sensors: `location__country_iso2=NP`
 - measurements: looped by location ids
 
 ### Demo usage
@@ -73,7 +73,7 @@ Notebook calls:
 - `/api/v1/data-sources/edgar/air-pollutant-totals/`
 
 Notebook filters:
-- `country_code=NPL`
+- `country_iso3=NPL` (Jana #172 canonical; `country_code` still accepted as alias)
 
 ### Demo usage
 Use EDGAR to power:
