@@ -286,16 +286,18 @@ export async function fetchEdgarSummary(
     : "/api/v1/data-sources/edgar/country-totals/";
 
   // EDGAR grid-emissions has no country dimension (gridded global data); only
-  // country-totals accepts country_code. Both endpoints accept start_date /
+  // country-totals accepts country_iso3. Both endpoints accept start_date /
   // end_date (Jana PR #170): the backend translates the date range to
   // year__gte / year__lte so the request is bounded — without this, a Kathmandu
   // grid + multi-year range can return 20k+ records and time out the proxy.
+  // Jana #172 Phase 2 (May 2026) removed the country_code alias on EDGAR;
+  // canonical-only filters are now enforced — must use country_iso3.
   const params: Record<string, string | number | boolean> = {
     page_size: 1000,
     ...geo,
   };
   if (!isLocal) {
-    params.country_code = region.countryCode;
+    params.country_iso3 = region.countryCode;
   }
   if (dateRange?.start_date) {
     params.start_date = dateRange.start_date;
